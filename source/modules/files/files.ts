@@ -874,10 +874,11 @@ export default class Files {
 		// /Home/symlink-to-root/etc/passwd
 		const deepestExistingPath = await getDeepestExistingPath(systemPath)
 		const deepestExistingRealPath = await fse.realpath(deepestExistingPath)
-        const realBasePath = await fse.realpath(basePath)
+		const deepestExistingBasePath = await getDeepestExistingPath(basePath)
+		const realBasePath = basePath.replace(deepestExistingBasePath, await fse.realpath(deepestExistingBasePath))
 
 		const realPath = systemPath.replace(deepestExistingPath, deepestExistingRealPath)
-        if (!realPath.startsWith(realBasePath)) throw new Error(`[escapes-base] '${virtualPath}' escapes '${basePath}'`)
+		if (!realPath.startsWith(realBasePath)) throw new Error(`[escapes-base] '${virtualPath}' escapes '${basePath}'`)
 
 		// We return the system path not the real path because at this point we know
 		// the path is safe and we want to return the path as it was passed in.
