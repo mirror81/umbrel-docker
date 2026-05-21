@@ -26,10 +26,11 @@ export default class Apps {
 		this.logger = umbreld.logger.createChildLogger(name.toLowerCase())
 	}
 
-	// Docker: We don't clean Docker state here because entry.sh manages the
+    // Docker: We don't clean Docker state here because entry.sh manages the
 	// umbrel_main_network. Cleaning state would prune that external network
 	// and break app-environment compose.
 	async cleanDockerState() {
+
 	}
 
 	async start() {
@@ -85,7 +86,8 @@ export default class Apps {
 
 		// Don't save references to any apps that don't have a data directory on
 		// startup. This will allow apps that were excluded from backups to be
-		// reinstalled when the system is restored.
+		// reinstalled when the system is restored. Otherwise they'll have an id
+		// entry but no data dir and will be stuck in a `not-running` state.
 		const appIdsMissingDataDir: string[] = []
 		for (const app of this.instances) {
 			const appDataDirectoryExists = await fse.pathExists(app.dataDirectory).catch(() => false)
@@ -120,12 +122,14 @@ export default class Apps {
 			this.logger.error(`Failed to pre-load local Docker images`, error)
 		}
 
- 		// Start app environment
+		// Start app environment
 		try {
 			try {
 				await appEnvironment(this.#umbreld, 'up')
 			} catch (error) {
 				this.logger.error(`Failed to start app environment`, error)
+				// this.logger.log('Attempting to clean Docker state before retrying...')
+				// await this.cleanDockerState()
 			}
 			await pRetry(() => appEnvironment(this.#umbreld, 'up'), {
 				onFailedAttempt: (error) => {
@@ -148,8 +152,9 @@ export default class Apps {
 			this.logger.error(`Failed to set permissions for Tor data directory`, error)
 		}
 
-		// Start apps
 		this.logger.log('Starting apps')
+		// Snapshot of currently installed apps (minus apps missing their data directories that will be reinstalled)
+		// We start these apps (save Promise), fire reinstalls without awaiting, then await the starts.
 		const appsToStart = [...this.instances]
 		const startAppsPromise = Promise.all(
 			appsToStart.map(async (app) => {
@@ -169,7 +174,9 @@ export default class Apps {
 			}),
 		)
 
-		// If this is the first boot after a backup restore, reinstall missing apps
+		// If this is the first boot after a backup restore, we kick off reinstalls of any apps that are missing their data directory.
+		// e.g., due to restoring a backup where the app was excluded.
+		// We fire and forget here so users see apps installing as soon as possible.
 		this.reinstallMissingAppsAfterRestore(appIdsMissingDataDir).catch((error) =>
 			this.logger.error('Failed to schedule app reinstalls after restore', error),
 		)
@@ -179,11 +186,16 @@ export default class Apps {
 	}
 
 	private async reinstallMissingAppsAfterRestore(appIds: string[]) {
+		// Only run on the first start after a backup restore
 		if (!this.#umbreld.isBackupRestoreFirstStart) return
+
+		// If there are no apps to reinstall, return early
 		if (appIds.length === 0) return
 
 		this.logger.log(`Detected ${appIds.length} app(s) missing a data directory after restore, reinstalling...`)
 		try {
+			// Best effort retry to ensure app repositories are pulled before reinstalling
+			// app stores are excluded from backups so first boot after recovery won't have them.
 			await pRetry(
 				async () => {
 					await this.#umbreld.appStore.update()
@@ -200,10 +212,15 @@ export default class Apps {
 			)
 		} catch (error) {
 			this.logger.error('Exhausted retries updating app store before reinstalls', error)
+
+			// If we fail, we return early because no appstore repos exist and installs will fail
+			// We won't retry on a later boot (marker file already deleted).
 			return
 		}
 
 		for (const appId of appIds) {
+			// Fire off all installs in parallel without blocking
+			// TODO: Consider adding concurrency limiting for app installs to avoid overwhelming system resources
 			this.install(appId).catch((error) => this.logger.error(`Failed to reinstall app ${appId}`, error))
 		}
 	}
@@ -295,6 +312,7 @@ export default class Apps {
 			let apps = await get('apps')
 			apps.push(appId)
 			// Make sure we never add dupes
+			// This can happen after restoring a backup with an excluded app and then reinstalling it
 			apps = [...new Set(apps)]
 			await set('apps', apps)
 		})
