@@ -110,3 +110,4 @@ export default class Samba {
 	async removeShare(virtualPath: string) {
 		return true
 	}
+}
