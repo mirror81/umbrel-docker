@@ -211,11 +211,11 @@ class Migration {
 		//}
 
 		// Check for first boot of an unknown device and migrate legacy Linux install data if it exists
-		try {
-			await this.migrateLegacyLinuxData()
-		} catch (error) {
-			this.logger.error(`Failed to migrate legacy Linux data`, error)
-		}
+		// try {
+		// 	await this.migrateLegacyLinuxData()
+		// } catch (error) {
+		// 	this.logger.error(`Failed to migrate legacy Linux data`, error)
+		//}
 
 		// Check for the Back That Mac Up app and migrate it if it exists
 		try {
