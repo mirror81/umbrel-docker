@@ -18,22 +18,20 @@ COPY source /packages/umbreld/source
 
 FROM --platform=$BUILDPLATFORM node:${NODE_VERSION}-${DEBIAN_VERSION} AS ui-build
 
-# Install pnpm
-RUN npm install -g pnpm@8
-
 # Set the working directory
 WORKDIR /packages/ui
 
 # Copy ui and umbreld source (ui imports shared types from umbreld)
 COPY --from=base packages/ui/ .
 COPY --from=base packages/umbreld/source /packages/umbreld/source
+COPY --from=base packages/umbreld/source/modules/server/trpc/common.ts /umbreld/source/modules/server/trpc/common.ts
 
 # Install the dependencies
 RUN rm -rf node_modules || true
-RUN pnpm install
+RUN npm ci
 
 # Build the app
-RUN pnpm run build
+RUN npm run build
 
 #########################################################################
 # backend build stage
