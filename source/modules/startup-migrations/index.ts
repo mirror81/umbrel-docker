@@ -30,12 +30,60 @@ class Migration {
 	// This allows the system to boot and come online but some state management features are broken in this state.
 	// An additional rugix commit and then reboot is required to complete the migration.
 	async finalizeMenderToRugixStateMigration() {
-		return {reboot: false}
+		const osPersistentOverlayPath = '/data/umbrel-os'
+
+		const isSymbolicLink = (await fse.lstat(osPersistentOverlayPath)).isSymbolicLink()
+		// TODO: Check with Maxi how safe this is. If there's any scenario where Rugix won't migrate the symlink overlay
+		// into a real directory overlay then this can result in an infinite boot loop.
+		if (!isSymbolicLink) return {reboot: false}
+
+		// This should only ever happen once. We allow 3 attempts to handle edge cases or situations where some random failures happen.
+		// If it fails consistently then we'll give up to prevent a boot loop.
+		const menderToRugixMigrationAttempt = (await this.umbreld.store.get('migration.menderToRugixAttempt')) || 0
+		if (menderToRugixMigrationAttempt >= 3) {
+			this.logger.error('Mender to Rugix state migration has been attempted 5 times, giving up to prevent a boot loop!')
+			return {reboot: false}
+		}
+
+		// Increment the attempt count
+		await this.umbreld.store.set('migration.menderToRugixAttempt', menderToRugixMigrationAttempt + 1)
+
+		// Finalize the migration by committing the OS partition and rebooting
+		this.logger.log(
+			'OS overlay path is a symbolic link, committing and rebooting to complete Mender to Rugix state migration...',
+		)
+		// This should've already happened in umbreld.start() but we'll just explicitly do it again here to be sure.
+		await commitOsPartition(this.umbreld)
+		return {reboot: true}
 	}
 
 	// One off migration for legacy custom Linux install users
 	async migrateLegacyLinuxData() {
-		return
+		const {deviceId} = await detectDevice()
+
+		// Only run this on unknown devices AKA not a Home or a Pi
+		if (deviceId !== 'unknown') return
+
+		// Don't do anything if a user has already been registered
+		if (await this.umbreld.user.exists()) return
+
+		this.logger.log(
+			'Unkown device booting for the first time, checking if we need to migrate legacy Linux install data...',
+		)
+
+		const externalUmbrelInstall = await findExternalUmbrelInstall()
+		if (!externalUmbrelInstall) {
+			this.logger.log('No legacy Linux install found, skipping migration')
+			return
+		}
+
+		this.logger.log('Legacy Linux install found, migrating data...')
+
+		const currentInstall = this.umbreld.dataDirectory
+		await runPreMigrationChecks(currentInstall, externalUmbrelInstall as string, this.umbreld, false)
+		await this.umbreld.server.start()
+		await migrateData(currentInstall, externalUmbrelInstall as string, this.umbreld)
+		this.logger.log('Migration complete!')
 	}
 
 	async activateImportedDataDirectory() {
@@ -141,11 +189,11 @@ class Migration {
 
 		// Check for Mender to Rugix state migration and complete it if needed
 		// try {
-		//	const {reboot} = await this.finalizeMenderToRugixStateMigration()
-		//	// We don't want to continue with any other migrations
-		//	if (reboot) return {reboot: true}
-		//} catch (error) {
-		//	this.logger.error(`Failed to finalize Mender to Rugix state migration`, error)
+		// 	const {reboot} = await this.finalizeMenderToRugixStateMigration()
+		// 	// We don't want to continue with any other migrations
+		// 	if (reboot) return {reboot: true}
+		// } catch (error) {
+		// 	this.logger.error(`Failed to finalize Mender to Rugix state migration`, error)
 		//}
 
 		// Check for a data directory to import
@@ -163,11 +211,11 @@ class Migration {
 		//}
 
 		// Check for first boot of an unknown device and migrate legacy Linux install data if it exists
-		// try {
-		//	await this.migrateLegacyLinuxData()
-		// } catch (error) {
-		//	this.logger.error(`Failed to migrate legacy Linux data`, error)
-		//}
+		try {
+			await this.migrateLegacyLinuxData()
+		} catch (error) {
+			this.logger.error(`Failed to migrate legacy Linux data`, error)
+		}
 
 		// Check for the Back That Mac Up app and migrate it if it exists
 		try {
