@@ -12,6 +12,7 @@ export default class Samba {
 	#umbreld: Umbreld
 	logger: Umbreld['logger']
 	#removeFileChangeListener?: () => void
+	#removeExternalStorageChangeListener?: () => void
 
 	constructor(umbreld: Umbreld) {
 		this.#umbreld = umbreld
@@ -21,9 +22,9 @@ export default class Samba {
 
 	// Add listener
 	async start() {
-		// Samba is disabled in Docker because it may conflict with the host daemon (since we use pid:host)
+        // Samba is disabled in Docker because it may conflict with the host daemon (since we use pid:host)
 		// We still handle share management in the store so the UI state is preserved.
-
+ 
 		// Attach listener to clean up shares when directories are deleted
 		this.#removeFileChangeListener = this.#umbreld.eventBus.on(
 			'files:watcher:change',
@@ -37,9 +38,13 @@ export default class Samba {
 	}
 
 	// Gets the share password
+	// On first run it will generate a random password and save it to the file.
+	// TODO: Some kind of umbreld.secrets.get() api for dealing with this kind
+	// of stuff might be nice in the future.
 	async getSharePassword() {
 		const sharePasswordFile = `${this.#umbreld.dataDirectory}/secrets/share-password`
 
+		// Get or create the share password
 		const sharePassword = await fse.readFile(sharePasswordFile, 'utf8').catch(async () => {
 			this.logger.log('Creating share password on first run')
 			const sharePassword = randomToken(128)
@@ -50,15 +55,23 @@ export default class Samba {
 		return sharePassword
 	}
 
-	// Apply shares — no-op in Docker (Samba not running)
-	async applyShares() {
+    async applySharePassword() {
 		// Samba is not started in Docker mode
+		return
 	}
 
-	// Compute a client-facing sharename
+	// Apply shares — no-op in Docker (Samba not running)
+	async applyShares({excludePaths}: {excludePaths?: string[]} = {}) {
+		// Samba is not started in Docker mode
+		return
+	}
+
+    // Compute a client-facing sharename so that shares are easily detectable in clients
 	async #computeSharename(name: string, path: string) {
+		// Default to "name (Umbrel)"
 		let sharename = `${name} (Umbrel)`
 		if (path === '/Home') {
+			// But Share /Home as "username's Umbrel"
 			const user = await this.#umbreld.user.get()
 			const username = user?.name
 			if (username) sharename = `${username}'s Umbrel`
@@ -68,87 +81,32 @@ export default class Samba {
 
 	// Read current shares from the store
 	async #get() {
-		const shares = await this.#umbreld.store.get('files.shares')
-		return shares || []
+		return []
 	}
 
-	// Remove shares on deletion
+    // Remove shares on deletion
+	// Note: The watcher only covers /Home, /Trash, and /Apps. External drives are not watched,
+	// so if a shared folder on an external drive is deleted outside the UI while the drive is
+	// connected, the share will remain in the store but be marked as unavailable by listShares()
+	// and skipped by applyShares(). (UI-initiated deletes handle share removal in files.ts.)
+	// TODO: It would be nice if we could handle updating favorites when the favorited directory is
+	// moved/renamed. It's not trivial because this can happen via something external like an app or SMB
+	// and there's no way to tell the difference between a move/rename and a deletion/recreation.
 	async #handleFileChange(event: FileChangeEvent) {
-		if (event.type !== 'delete') return
-		const shares = await this.#get()
-		const virtualDeletedPath = this.#umbreld.files.systemToVirtualPath(event.path)
-		const deletedShares = shares.filter((share) => share.path.startsWith(virtualDeletedPath))
-		for (const share of deletedShares) await this.removeShare(share.path)
+		return
 	}
 
-	// List shares
+	// List favorited directories
 	async listShares() {
-		const shares = await this.#get()
-
-		const mappedShares = await Promise.all(
-			shares.map(async (share) => {
-				const systemPath = await this.#umbreld.files.virtualToSystemPath(share.path)
-				const file = await this.#umbreld.files.status(systemPath).catch(() => undefined)
-				if (file?.type !== 'directory') return undefined
-				return share
-			}),
-		)
-		const filteredShares = mappedShares.filter((share) => share !== undefined)
-
-		const sharesWithSharenames = await Promise.all(
-			filteredShares.map(async (share) => ({
-				...share,
-				sharename: await this.#computeSharename(share.name, share.path),
-			})),
-		)
-		return sharesWithSharenames
+		return []
 	}
 
 	// Share a new directory
 	async addShare(virtualPath: string) {
-		const allowedOperations = await this.#umbreld.files.getAllowedOperations(virtualPath)
-		if (!allowedOperations.includes('share')) throw new Error('[operation-not-allowed]')
-
-		this.logger.log(`Adding share for ${virtualPath}`)
-
-		await this.#umbreld.store.getWriteLock(async ({set}) => {
-			const shares = await this.#get()
-
-			const shareExists = shares.some((share) => share.path === virtualPath)
-			if (shareExists) throw new Error('[share-already-exists]')
-
-			let name = nodePath.basename(virtualPath)
-			let i = 1
-			while (shares.some((share) => share.name === name)) {
-				i++
-				if (i > 10) throw new Error('[share-name-generation-failed]')
-				name = `${nodePath.basename(virtualPath)} (${i})`
-			}
-
-			await set('files.shares', [...shares, {name, path: virtualPath}])
-		})
-
-		await this.applyShares()
-
-		return virtualPath
+		throw new Error('Not supported in Docker!')
 	}
 
 	// Remove a share
 	async removeShare(virtualPath: string) {
-		this.logger.log(`Removing share for ${virtualPath}`)
-
-		let deleted = false
-		await this.#umbreld.store.getWriteLock(async ({set}) => {
-			const shares = await this.#get()
-			const newShares = shares.filter((share) => share.path !== virtualPath)
-			deleted = newShares.length < shares.length
-			if (deleted) await set('files.shares', newShares)
-		})
-
-		if (deleted) {
-			await this.applyShares()
-		}
-
-		return deleted
+		return true
 	}
-}
