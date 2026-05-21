@@ -194,7 +194,7 @@ export default class Raid {
 	}
 
 	async hasConfigStore() {
-		return await fse.pathExists(this.configStore.filePath)
+		return false
 	}
 
 	// Generate a unique pool name with random suffix to avoid collisions
