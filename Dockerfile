@@ -55,6 +55,9 @@ RUN npm clean-install --omit dev && npm link
 #########################################################################
 
 FROM debian:${DEBIAN_VERSION}-slim AS umbrelos
+
+# Docker API version compatibility - ensures SDK works with newer Docker daemons
+ENV DOCKER_API_VERSION=1.44
 ENV NODE_ENV=production
 
 # We need to duplicate this such that we can also use the argument below.
