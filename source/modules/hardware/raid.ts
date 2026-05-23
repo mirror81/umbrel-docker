@@ -247,4 +247,5 @@ export default class Raid {
 		acceleratorDeviceId?: string,
 	): Promise<boolean> {
 		return false
+	}
 }
