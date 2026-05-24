@@ -66,6 +66,14 @@ docker run -it --rm --name umbrel --pid=host -p 80:80 -v "${PWD:-.}/umbrel:/data
 
   Replace the example path `./umbrel` with the desired storage folder or named volume.
 
+### How do I run CasaOS in a container?
+
+  See [dockur/casa](https://github.com/dockur/casa) for a CasaOS container.
+
+### How do I run ZimaOS in a container?
+
+  See [dockur/zima](https://github.com/dockur/zima) for a ZimaOS container.
+
 ## Stars 🌟
 [![Stars](https://starchart.cc/dockur/umbrel.svg?variant=adaptive)](https://starchart.cc/dockur/umbrel)
 
