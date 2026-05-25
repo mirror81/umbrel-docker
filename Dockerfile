@@ -102,4 +102,7 @@ COPY --from=be-build --chmod=755 /opt/umbreld /opt/umbreld
 VOLUME /data
 EXPOSE 80 443
 
+HEALTHCHECK --interval=60s --timeout=10s --start-period=60s --retries=3 \
+  CMD curl -LfSs http://localhost:80 >/dev/null || exit 1
+
 ENTRYPOINT ["/usr/bin/tini", "-s", "/run/entry.sh"]
