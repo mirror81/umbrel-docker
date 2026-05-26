@@ -17,11 +17,13 @@ if [ ! -S /var/run/docker.sock ]; then
   error "Docker socket is missing? Please bind /var/run/docker.sock in your compose file." && exit 13
 fi
 
+subnet="10.21.0.0/16"
 net="umbrel_main_network"
+
 docker network rm "$net" &>/dev/null || true
 
 if ! docker network inspect "$net" &>/dev/null; then
-  if ! docker network create --driver=bridge --subnet="10.21.0.0/16" "$net" >/dev/null; then
+  if ! docker network create --driver=bridge "--subnet=$subnet" "$net" >/dev/null; then
     error "Failed to create network '$net'!" && exit 14
   fi
   if ! docker network inspect "$net" &>/dev/null; then
@@ -36,7 +38,7 @@ if ! docker inspect "$target" &>/dev/null; then
 fi
 
 resp=$(docker inspect "$target")
-network=$(echo "$resp" | jq -r '.[0].NetworkSettings.Networks["umbrel_main_network"]')
+network=$(echo "$resp" | jq -r ".[0].NetworkSettings.Networks[\"$net\"]")
 
 if [ -z "$network" ] || [[ "$network" == "null" ]]; then
   if ! docker network connect "$net" "$target"; then
