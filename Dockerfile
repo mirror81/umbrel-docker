@@ -65,7 +65,7 @@ ARG TARGETARCH
 ARG YQ_VERSION
 ARG NODE_VERSION
 
-ARG VERSION_ARG="1.7.3"
+ARG VERSION_ARG="0.0"
 ARG DEBCONF_NOWARNINGS="yes"
 ARG DEBIAN_FRONTEND="noninteractive"
 ARG DEBCONF_NONINTERACTIVE_SEEN="true"
@@ -86,7 +86,7 @@ RUN set -eu \
   && rm -rf node.tar.gz \
   && curl -fsLo /usr/local/bin/yq "https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/yq_linux_${TARGETARCH}" \
   && chmod +x /usr/local/bin/yq \
-  && echo "$VERSION_ARG" > /run/version \
+  && echo "$VERSION_ARG" > /etc/version \
   && addgroup --gid 1000 umbrel \
   && adduser --uid 1000 --gid 1000 --gecos "" --disabled-password umbrel \
   && echo "umbrel:umbrel" | chpasswd \
