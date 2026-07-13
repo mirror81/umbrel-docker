@@ -22,16 +22,43 @@ checkEnvironment() {
   return 0
 }
 
+checkDocker() {
+
+  if ! docker info >/dev/null 2>&1; then
+    error "Failed to connect to the Docker daemon through /var/run/docker.sock." && exit 25
+  fi
+
+  if ! docker compose version >/dev/null 2>&1; then
+    error "Docker Compose is not available. Please install the Docker Compose plugin." && exit 26
+  fi
+
+  return 0
+}
+
 configureNetwork() {
 
+  local current_gateway=""
   local current_subnet=""
   local network_json=""
 
   if network_json=$(docker network inspect "$net" 2>/dev/null); then
-    if jq -e --arg subnet "$subnet" 'any(.[0].IPAM.Config[]?; .Subnet == $subnet)' <<<"$network_json" >/dev/null; then
-      current_subnet="$subnet"
+    current_subnet=$(
+      jq -r \
+        --arg subnet "$subnet" \
+        'first(.[0].IPAM.Config[]? | select(.Subnet == $subnet) | .Subnet) // ""' \
+        <<<"$network_json"
+    )
+
+    if [ -n "$current_subnet" ]; then
+      current_gateway=$(
+        jq -r \
+          --arg subnet "$subnet" \
+          'first(.[0].IPAM.Config[]? | select(.Subnet == $subnet) | .Gateway) // ""' \
+          <<<"$network_json"
+      )
     else
-      current_subnet="$(jq -r '.[0].IPAM.Config[0].Subnet // ""' <<<"$network_json")"
+      current_subnet=$(jq -r '.[0].IPAM.Config[0].Subnet // ""' <<<"$network_json")
+      current_gateway=$(jq -r '.[0].IPAM.Config[0].Gateway // ""' <<<"$network_json")
     fi
   fi
 
@@ -39,8 +66,16 @@ configureNetwork() {
     error "Bridge network '$net' already uses subnet $current_subnet instead of the required subnet $subnet." && exit 14
   fi
 
+  if [ -n "$current_subnet" ] && [ "$current_gateway" != "$gateway" ]; then
+    error "Bridge network '$net' already uses gateway ${current_gateway:-unknown} instead of the required gateway $gateway." && exit 14
+  fi
+
   if ! docker network inspect "$net" &>/dev/null; then
-    if ! docker network create --driver=bridge "--subnet=$subnet" "$net" >/dev/null; then
+    if ! docker network create \
+      --driver=bridge \
+      "--subnet=$subnet" \
+      "--gateway=$gateway" \
+      "$net" >/dev/null; then
       error "Failed to create bridge network '$net'!" && exit 14
     fi
   fi
@@ -107,6 +142,64 @@ inspectContainer() {
   resp=$(docker inspect "$name") || {
     error "Failed to inspect container $name!" && exit 16
   }
+
+  return 0
+}
+
+imageRepository() {
+
+  local image="${1%%@*}"
+
+  # Remove the tag from the final path component while preserving a registry port
+  sed -E 's#:[^/:]+$##' <<<"$image"
+
+  return 0
+}
+
+checkOtherInstance() {
+
+  local container=""
+  local container_image=""
+  local container_name=""
+  local container_repo=""
+  local current_image=""
+  local current_repo=""
+  local other=""
+
+  current_image=$(jq -r '.[0].Config.Image // ""' <<<"$resp")
+  current_repo=$(imageRepository "$current_image")
+
+  while read -r container; do
+    [ -z "$container" ] && continue
+
+    container_name=$(docker inspect -f '{{.Name}}' "$container" 2>/dev/null | sed 's#^/##') || continue
+    [ "$container_name" = "$name" ] && continue
+
+    container_image=$(docker inspect -f '{{.Config.Image}}' "$container" 2>/dev/null) || continue
+    container_repo=$(imageRepository "$container_image")
+
+    if [ -n "$current_repo" ] && [ "$container_repo" = "$current_repo" ]; then
+      other="$container_name"
+      break
+    fi
+  done < <(docker ps -q)
+
+  if [ -n "$other" ]; then
+    error "Another Umbrel container is already running: $other" && exit 23
+  fi
+
+  return 0
+}
+
+checkPidMode() {
+
+  local pid_mode
+
+  pid_mode=$(jq -r '.[0].HostConfig.PidMode // ""' <<<"$resp")
+
+  if [ "$pid_mode" != "host" ]; then
+    error "Host PID mode is required. Please add 'pid: host' to your compose file." && exit 24
+  fi
 
   return 0
 }
@@ -215,16 +308,20 @@ prepareDirectories() {
 }
 
 checkEnvironment
+checkDocker
 
 cid=""
 name=""
 host=$(hostname -s)
 net="umbrel_main_network"
 subnet="10.21.0.0/16"
+gateway="10.21.0.1"
 
-configureNetwork
 detectContainerName
 inspectContainer
+checkOtherInstance
+checkPidMode
+configureNetwork
 connectNetwork
 detectDataMount
 checkDataPermissions
