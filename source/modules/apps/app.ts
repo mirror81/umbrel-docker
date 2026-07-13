@@ -30,7 +30,7 @@ async function patchYaml(path: string) {
 
 	const find = '$APP_LIGHTNING_NODE_REST_PORT:$APP_LIGHTNING_NODE_REST_PORT'
 	if (!yaml.includes(find)) return true
-	yaml = yaml.replace(find, '8558:$APP_LIGHTNING_NODE_REST_PORT');
+	yaml = yaml.replaceAll(find, '8558:$APP_LIGHTNING_NODE_REST_PORT');
 
 	await fse.writeFile(path, yaml)
 	return true
@@ -379,8 +379,18 @@ export default class App {
 
 		if (!containerName) throw new Error(`No container_name found for service ${service} in app ${this.id}`)
 
-		const {stdout: containerIp} =
-			await $`docker inspect -f {{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}} ${containerName}`
+		const {stdout} = await $`docker inspect ${containerName}`
+		const container = JSON.parse(stdout)?.[0] as {
+			NetworkSettings?: {
+				Networks?: Record<string, {IPAddress?: string}>
+			}
+		}
+		const networks = container?.NetworkSettings?.Networks || {}
+		const containerIp =
+			networks.umbrel_main_network?.IPAddress ||
+			Object.values(networks).find((network) => network.IPAddress)?.IPAddress
+
+		if (!containerIp) throw new Error(`No IP address found for container ${containerName}`)
 
 		return containerIp
 	}
